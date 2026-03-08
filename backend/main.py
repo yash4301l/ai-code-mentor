@@ -1,4 +1,5 @@
-﻿import ast
+import ast
+import json
 import multiprocessing as mp
 import os
 import queue
@@ -11,6 +12,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 try:
+    import boto3
+except ImportError:  # boto3 is optional until Bedrock is enabled
+    boto3 = None
+
+try:
     from auditor import audit_trace
     from claim_parser import parse_claims, verify_claims
 except ImportError:
@@ -19,6 +25,18 @@ except ImportError:
 
 EXEC_TIMEOUT_SECONDS = float(os.getenv("EXEC_TIMEOUT_SECONDS", "2.5"))
 MAX_TRACE_STEPS = int(os.getenv("MAX_TRACE_STEPS", "200"))
+
+
+def _parse_bool(raw_value: str) -> bool:
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+BEDROCK_ENABLED = _parse_bool(os.getenv("BEDROCK_ENABLED", "false"))
+BEDROCK_REGION = os.getenv("AWS_REGION", "us-east-1")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+BEDROCK_MAX_TOKENS = int(os.getenv("BEDROCK_MAX_TOKENS", "350"))
+BEDROCK_TEMPERATURE = float(os.getenv("BEDROCK_TEMPERATURE", "0.2"))
+_BEDROCK_CLIENT = None
 SAFE_BUILTINS = {
     "abs": abs,
     "enumerate": enumerate,
@@ -213,9 +231,7 @@ def trace_dynamic(code, arr, target):
     return payload["trace"]
 
 
-def get_ai_explanation_for_code(code):
-    bug_type = detect_bug_type(code)
-
+def _get_mock_explanation(bug_type: str) -> str:
     explanations = {
         "correct": """
             This binary search correctly finds the target element.
@@ -256,8 +272,98 @@ def get_ai_explanation_for_code(code):
             The algorithm is completely correct and entirely bug free.
         """,
     }
+    return explanations.get(bug_type, explanations["correct"]).strip()
 
-    return explanations.get(bug_type, explanations["correct"]), bug_type
+
+def _get_bedrock_client():
+    global _BEDROCK_CLIENT
+    if boto3 is None:
+        raise RuntimeError("boto3 is not installed")
+    if _BEDROCK_CLIENT is None:
+        _BEDROCK_CLIENT = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
+    return _BEDROCK_CLIENT
+
+
+def _build_bedrock_prompt(code: str, trace: dict, audit: dict, bug_type: str) -> str:
+    trace_lines = []
+    for step in trace.get("steps", [])[:10]:
+        vars = step.get("variables", {})
+        lo = vars.get("lo", "?")
+        hi = vars.get("hi", "?")
+        mid = vars.get("mid", "?")
+        trace_lines.append(f"step {step.get('step', '?')}: lo={lo}, hi={hi}, mid={mid}")
+
+    violations = audit.get("violations", [])[:5]
+    violation_lines = []
+    for item in violations:
+        rule = item.get("rule", "unknown")
+        expected = item.get("expected", "")
+        actual = item.get("actual", "")
+        violation_lines.append(f"- {rule} | expected: {expected} | actual: {actual}")
+
+    violation_block = "\n".join(violation_lines) if violation_lines else "- no explicit violations"
+    trace_block = "\n".join(trace_lines) if trace_lines else "- no trace steps"
+
+    return f"""
+You are a teaching assistant for algorithms.
+Explain the student's binary search behavior using ONLY the evidence below.
+Do not claim correctness if evidence shows failures.
+Keep response concise: 4-6 sentences.
+
+Detected bug type (heuristic): {bug_type}
+Audit verdict: {audit.get('verdict')}
+Violations:
+{violation_block}
+
+Trace summary:
+{trace_block}
+
+Student code:
+{code}
+""".strip()
+
+
+def _extract_bedrock_text(payload: dict) -> str:
+    texts = []
+    for block in payload.get("content", []):
+        if isinstance(block, dict) and block.get("type") == "text":
+            texts.append(block.get("text", ""))
+    return "\n".join(part for part in texts if part).strip()
+
+
+def _get_bedrock_explanation(code: str, trace: dict, audit: dict, bug_type: str) -> str:
+    client = _get_bedrock_client()
+    prompt = _build_bedrock_prompt(code, trace, audit, bug_type)
+
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": BEDROCK_MAX_TOKENS,
+        "temperature": BEDROCK_TEMPERATURE,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+    }
+
+    response = client.invoke_model(
+        modelId=BEDROCK_MODEL_ID,
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps(body),
+    )
+    payload = json.loads(response["body"].read())
+    explanation = _extract_bedrock_text(payload)
+    if not explanation:
+        raise RuntimeError("Bedrock returned empty explanation")
+    return explanation
+
+
+def get_ai_explanation_for_code(code: str, trace: dict, audit: dict, bug_type: str):
+    if BEDROCK_ENABLED:
+        try:
+            explanation = _get_bedrock_explanation(code, trace, audit, bug_type)
+            return explanation, "bedrock", None
+        except Exception as exc:  # noqa: BLE001
+            return _get_mock_explanation(bug_type), "mock-fallback", str(exc)
+
+    return _get_mock_explanation(bug_type), "mock", None
 
 
 def explain_hallucination(bug_type, violations, hallucinations):
@@ -317,6 +423,8 @@ def home():
         "status": "running",
         "message": "AI Code Mentor API v2 is live!",
         "version": "2.0.0",
+        "bedrock_enabled": BEDROCK_ENABLED,
+        "bedrock_model_id": BEDROCK_MODEL_ID if BEDROCK_ENABLED else None,
     }
 
 
@@ -338,7 +446,12 @@ def analyze(request: AnalyzeRequest):
         trace = trace_dynamic(request.code, test_arr, test_target)
         audit = audit_trace(trace, trace["func_name"], test_arr, test_target, request.code)
 
-        explanation, bug_type = get_ai_explanation_for_code(request.code)
+        explanation, ai_provider, ai_error = get_ai_explanation_for_code(
+            request.code,
+            trace,
+            audit,
+            bug_type,
+        )
         claims = parse_claims(explanation)
         verification = verify_claims(claims, audit)
 
@@ -357,6 +470,8 @@ def analyze(request: AnalyzeRequest):
             "verdict": verdict,
             "bug_type": bug_type,
             "safe_to_deliver": verification["safe_to_deliver"],
+            "ai_provider": ai_provider,
+            "ai_error": ai_error,
             "explanation": explanation.strip() if verdict == "APPROVED" else None,
             "hallucination_detail": hallucination_detail,
             "hallucinations": verification["hallucinations"],
@@ -399,7 +514,4 @@ def analyze(request: AnalyzeRequest):
                 "detail": str(exc),
             },
         )
-
-
-
 
