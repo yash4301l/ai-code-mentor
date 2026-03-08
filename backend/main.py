@@ -10,8 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from auditor import audit_trace
-from claim_parser import parse_claims, verify_claims
+try:
+    from auditor import audit_trace
+    from claim_parser import parse_claims, verify_claims
+except ImportError:
+    from .auditor import audit_trace
+    from .claim_parser import parse_claims, verify_claims
 
 EXEC_TIMEOUT_SECONDS = float(os.getenv("EXEC_TIMEOUT_SECONDS", "2.5"))
 MAX_TRACE_STEPS = int(os.getenv("MAX_TRACE_STEPS", "200"))
@@ -395,4 +399,7 @@ def analyze(request: AnalyzeRequest):
                 "detail": str(exc),
             },
         )
+
+
+
 
