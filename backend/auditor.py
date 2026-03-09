@@ -1,4 +1,4 @@
-﻿def audit_trace(trace, func_name, arr, target, code=""):
+def audit_trace(trace, func_name, arr, target, code=""):
     steps = trace['steps']
     result = trace['result']
     violations = []
@@ -83,6 +83,20 @@
                     })
                     break
 
+        normalized = "".join(code.split())
+        reversed_branch = (
+            "ifarr[mid]>target:lo=mid+1" in normalized
+            or "elifarr[mid]>target:lo=mid+1" in normalized
+            or "ifarr[mid]<target:hi=mid-1" in normalized
+            or "elifarr[mid]<target:hi=mid-1" in normalized
+        )
+        if reversed_branch:
+            violations.append({
+                "rule": "Reversed branch update",
+                "expected": "arr[mid] > target should move hi left; arr[mid] < target should move lo right",
+                "actual": "Detected comparison branch updating the wrong pointer direction",
+                "severity": "HIGH"
+            })
     # RULE 5 - Potential infinite-loop source pattern from code
     # This is a heuristic only; trace-based rules carry more weight.
     if code:
@@ -163,5 +177,4 @@ if __name__ == "__main__":
                 print("No violations found!")
         except Exception as e:
             print(f"CRASHED: {e}")
-
 

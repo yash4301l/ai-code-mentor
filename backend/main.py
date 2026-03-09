@@ -193,6 +193,10 @@ def detect_bug_type(code):
         or "elifarr[mid]>=target" in normalized
         or "elifarr[mid]<=target" in normalized
         or ("ifarr[mid]==target" in normalized and "elifarr[mid]==target" in normalized)
+        or "ifarr[mid]>target:lo=mid+1" in normalized
+        or "elifarr[mid]>target:lo=mid+1" in normalized
+        or "ifarr[mid]<target:hi=mid-1" in normalized
+        or "elifarr[mid]<target:hi=mid-1" in normalized
     ):
         return "wrong_condition"
 
