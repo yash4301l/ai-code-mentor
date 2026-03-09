@@ -23,6 +23,14 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  const getProviderLabel = (provider) => {
+    if (!provider) return "Unknown";
+    if (provider === "bedrock") return "Amazon Bedrock";
+    if (provider === "mock-fallback") return "Bedrock fallback (mock)";
+    if (provider === "mock") return "Mock";
+    return provider;
+  };
+
   const handleAnalyze = async () => {
     setLoading(true);
     setResult(null);
@@ -57,7 +65,7 @@ export default function App() {
           <div>
             <h1 style={styles.title}>AI Code Mentor</h1>
             <p style={styles.subtitle}>
-              Reasoning Safety Layer â€” paste any binary search code and we'll
+              Reasoning Safety Layer - paste any binary search code and we'll
               verify if the AI explanation is safe to deliver
             </p>
           </div>
@@ -70,7 +78,7 @@ export default function App() {
 
       <div style={styles.main}>
 
-        {/* LEFT â€” Editor */}
+        {/* LEFT - Editor */}
         <div style={styles.left}>
           <div style={styles.cardHeader}>
             <span style={styles.cardTitle}>Your Code</span>
@@ -124,7 +132,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* RIGHT â€” Results */}
+        {/* RIGHT - Results */}
         <div style={styles.right}>
           <div style={styles.cardHeader}>
             <span style={styles.cardTitle}>Pipeline Results</span>
@@ -189,8 +197,20 @@ export default function App() {
                 <div style={styles.verdictDesc}>
                   {result.verdict === "APPROVED"
                     ? "This explanation is verified and safe to deliver to students."
-                    : "AI hallucination detected â€” this explanation has been blocked."}
+                    : "AI hallucination detected - this explanation has been blocked."}
                 </div>
+              </div>
+
+              <div style={styles.metaRow}>
+                <div style={styles.metaItem}>
+                  <span style={styles.metaLabel}>AI Source</span>
+                  <span style={styles.metaValue}>{getProviderLabel(result.ai_provider)}</span>
+                </div>
+                {result.ai_error && (
+                  <div style={styles.metaWarning}>
+                    Fallback reason: {result.ai_error}
+                  </div>
+                )}
               </div>
 
               {/* Hallucination detail */}
@@ -270,7 +290,7 @@ export default function App() {
                 <div style={styles.sectionTitle}>
                   Execution Trace
                   <span style={styles.traceCount}>
-                    {result.trace.total_steps} steps â€” returned index {result.trace.result}
+                    {result.trace.total_steps} steps - returned index {result.trace.result}
                   </span>
                 </div>
                 <div style={styles.traceBox}>
@@ -328,6 +348,11 @@ const styles = {
   verdictBox: { borderRadius: 12, padding: "24px", textAlign: "center", marginBottom: 16 },
   verdictLabel: { fontSize: 20, fontWeight: 800, marginBottom: 6 },
   verdictDesc: { fontSize: 13, color: "#94a3b8" },
+  metaRow: { display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 },
+  metaItem: { display: "inline-flex", alignItems: "center", gap: 8, background: "#0a0f1a", border: "1px solid #1a2640", borderRadius: 8, padding: "8px 10px" },
+  metaLabel: { fontSize: 11, color: "#4a6080" },
+  metaValue: { fontSize: 12, color: "#00d4ff", fontWeight: 700 },
+  metaWarning: { fontSize: 11, color: "#f59e0b", background: "#1a1200", border: "1px solid #3a2a00", borderRadius: 8, padding: "8px 10px", lineHeight: 1.4 },
   hintBox: { marginTop: 12, fontSize: 12, color: "#f59e0b", background: "#1a1200", padding: "8px 12px", borderRadius: 6 },
   section: { background: "#0a0f1a", border: "1px solid #1a2640", borderRadius: 10, padding: 16, marginBottom: 12 },
   sectionTitle: { fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" },
@@ -350,6 +375,4 @@ const styles = {
   traceVar: { fontSize: 11, color: "#94a3b8" },
   traceVal: { color: "#f59e0b" },
 };
-
-
 
