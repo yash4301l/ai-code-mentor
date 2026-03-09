@@ -1,5 +1,4 @@
 import ast
-import json
 import multiprocessing as mp
 import os
 import queue
@@ -33,7 +32,7 @@ def _parse_bool(raw_value: str) -> bool:
 
 BEDROCK_ENABLED = _parse_bool(os.getenv("BEDROCK_ENABLED", "false"))
 BEDROCK_REGION = os.getenv("AWS_REGION", "us-east-1")
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "amazon.nova-micro-v1:0")
 BEDROCK_MAX_TOKENS = int(os.getenv("BEDROCK_MAX_TOKENS", "350"))
 BEDROCK_TEMPERATURE = float(os.getenv("BEDROCK_TEMPERATURE", "0.2"))
 _BEDROCK_CLIENT = None
@@ -327,33 +326,36 @@ Student code:
 """.strip()
 
 
-def _extract_bedrock_text(payload: dict) -> str:
+def _extract_bedrock_text(response: dict) -> str:
+    content = response.get("output", {}).get("message", {}).get("content", [])
     texts = []
-    for block in payload.get("content", []):
-        if isinstance(block, dict) and block.get("type") == "text":
-            texts.append(block.get("text", ""))
-    return "\n".join(part for part in texts if part).strip()
+    for part in content:
+        if isinstance(part, dict):
+            if "text" in part and isinstance(part["text"], str):
+                texts.append(part["text"])
+            elif part.get("type") == "text" and isinstance(part.get("text"), str):
+                texts.append(part["text"])
+    return "\n".join(chunk.strip() for chunk in texts if chunk).strip()
 
 
 def _get_bedrock_explanation(code: str, trace: dict, audit: dict, bug_type: str) -> str:
     client = _get_bedrock_client()
     prompt = _build_bedrock_prompt(code, trace, audit, bug_type)
 
-    body = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": BEDROCK_MAX_TOKENS,
-        "temperature": BEDROCK_TEMPERATURE,
-        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-    }
-
-    response = client.invoke_model(
+    response = client.converse(
         modelId=BEDROCK_MODEL_ID,
-        contentType="application/json",
-        accept="application/json",
-        body=json.dumps(body),
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": prompt}],
+            }
+        ],
+        inferenceConfig={
+            "maxTokens": BEDROCK_MAX_TOKENS,
+            "temperature": BEDROCK_TEMPERATURE,
+        },
     )
-    payload = json.loads(response["body"].read())
-    explanation = _extract_bedrock_text(payload)
+    explanation = _extract_bedrock_text(response)
     if not explanation:
         raise RuntimeError("Bedrock returned empty explanation")
     return explanation
@@ -518,4 +520,3 @@ def analyze(request: AnalyzeRequest):
                 "detail": str(exc),
             },
         )
-

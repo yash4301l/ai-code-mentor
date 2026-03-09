@@ -1,13 +1,13 @@
-﻿# Bedrock Setup (Hackathon Fast Path)
+# Bedrock Setup (Hackathon Fast Path)
 
-This guide connects your backend to Amazon Bedrock Claude with minimal changes.
+This guide connects your backend to Amazon Bedrock models with minimal changes.
 
 ## 1) AWS prerequisites
 
 - Region: use a Bedrock-supported region (for example `us-east-1` or `ap-south-1` if model access is enabled there).
 - In Bedrock console:
   - Open **Model access**.
-  - Request/enable access for a Claude model (example: `anthropic.claude-3-haiku-20240307-v1:0`).
+  - Enable access for a model you can invoke (recommended fast path: `amazon.nova-micro-v1:0`).
 
 ## 2) IAM permissions for backend runtime
 
@@ -23,7 +23,7 @@ Scope resource to the model ARN if possible.
 Set these where backend runs (EC2/App Runner/etc):
 
 - `AWS_REGION=us-east-1`
-- `BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0`
+- `BEDROCK_MODEL_ID=amazon.nova-micro-v1:0`
 - `BEDROCK_ENABLED=true`
 
 ## 4) Python dependency
@@ -42,7 +42,7 @@ boto3>=1.34.0
 
 ## 5) Minimal code integration pattern
 
-In backend, create a helper that returns structured JSON from Claude.
+In backend, create a helper that returns structured JSON from Bedrock.
 
 ```python
 import json
@@ -51,7 +51,7 @@ import boto3
 
 bedrock = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
 
-MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "amazon.nova-micro-v1:0")
 
 
 def classify_and_explain_with_bedrock(code: str, trace: dict, audit: dict) -> dict:
